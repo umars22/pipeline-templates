@@ -1,0 +1,72 @@
+pipeline {
+  agent any
+
+  environment {
+    AWS_REGION = 'us-east-1'
+    ACCOUNT_ID = '123456789012'
+    SERVICE_NAME = 'my-ecs-app'
+    BLUE_SERVICE = "${SERVICE_NAME}-blue"
+    GREEN_SERVICE = "${SERVICE_NAME}-green"
+    TARGET_GROUP_BLUE = 'arn:aws:elasticloadbalancing:...:targetgroup/blue'
+    TARGET_GROUP_GREEN = 'arn:aws:elasticloadbalancing:...:targetgroup/green'
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Build & Push Image') {
+      steps {
+        sh 'docker build -t ${SERVICE_NAME}:${BUILD_NUMBER} .'
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            docker tag ${SERVICE_NAME}:${BUILD_NUMBER} ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}:${BUILD_NUMBER}
+            docker push ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}:${BUILD_NUMBER}
+          '''
+        }
+      }
+    }
+
+    stage('Deploy to green') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            aws ecs update-service \
+              --cluster ${SERVICE_NAME}-cluster \
+              --service ${GREEN_SERVICE} \
+              --task-definition ${SERVICE_NAME} \
+              --force-new-deployment \
+              --region ${AWS_REGION}
+          '''
+        }
+      }
+    }
+
+    stage('Smoke test green') {
+      steps {
+        sh 'curl -f https://green.myapp.com/health'
+      }
+    }
+
+    stage('Switch traffic to green') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            aws deploy create-deployment \
+              --application-name ${SERVICE_NAME}-codedeploy \
+              --deployment-group-name ${SERVICE_NAME}-dg \
+              --deployment-config-name CodeDeployDefault.AllAtOnce \
+              --file-exists-behavior OVERWRITE \
+              --region ${AWS_REGION}
+          '''
+        }
+      }
+    }
+  }
+}

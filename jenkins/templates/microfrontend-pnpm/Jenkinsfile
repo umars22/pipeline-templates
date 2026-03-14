@@ -1,0 +1,29 @@
+pipeline {
+  agent { label 'node' }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Install & Detect') {
+      steps {
+        sh '''
+          pnpm install
+          pnpm m ls --depth  -1 > changed.txt
+        '''
+      }
+    }
+
+    stage('Build Changed Packages') {
+      steps {
+        script {
+          def changedPackages = readFile('changed.txt').split('\n').findAll { it }
+          parallel changedPackages.collectEntries { pkg ->
+            [pkg, {
+              sh "pnpm --filter ${pkg} build"
+            }]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+pipeline {
+  agent { label 'mac' }
+
+  environment {
+    AWS_REGION = 'us-east-1'
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Install deps') {
+      steps {
+        sh '''
+          cd mobile
+          npm install
+        '''
+      }
+    }
+
+    stage('Build iOS IPA') {
+      steps {
+        withCredentials([string(credentialsId: 'app-store-connect-api-key', variable: 'APP_STORE_KEY')]) {
+          sh '''
+            cd mobile
+            npx expo run:ios --no-install
+            xcodebuild -exportArchive -archivePath ios/build/MyApp.xcarchive -exportPath ios/build/ipa -exportOptionsPlist ios/ExportOptions.plist
+            xcrun altool --upload-app -f ios/build/ipa/MyApp.ipa -u $APPLE_ID -p $APP_SPECIFIC_PASSWORD
+          '''
+        }
+      }
+    }
+
+    stage('Build Android APK') {
+      steps {
+        sh '''
+          cd mobile
+          npx expo run:android --no-install
+          ./gradlew assembleRelease
+        '''
+      }
+    }
+  }
+}

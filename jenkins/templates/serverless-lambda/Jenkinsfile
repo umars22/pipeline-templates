@@ -1,0 +1,34 @@
+pipeline {
+  agent { docker { image 'lambci/lambda:build-python3.9' } }
+
+  environment {
+    AWS_REGION = 'us-east-1'
+    STACK_NAME = 'my-serverless-stack'
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Install deps & tests') {
+      steps {
+        sh '''
+          npm install -g serverless
+          pip install -r requirements.txt
+          pytest
+        '''
+      }
+    }
+
+    stage('Deploy serverless') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            serverless deploy --stage prod --region ${AWS_REGION}
+          '''
+        }
+      }
+    }
+  }
+}

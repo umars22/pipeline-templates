@@ -1,0 +1,46 @@
+pipeline {
+  agent any
+  triggers { cron('H H * * *') } // runs daily at a random hour per Jenkins best practice
+
+  environment {
+    REPORT_DIR = 'security-reports'
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Run Snyk') {
+      steps {
+        withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
+          sh '''
+            npm install -g snyk
+            snyk auth $SNYK_TOKEN
+            snyk test --json > ${REPORT_DIR}/snyk.json || true
+          '''
+        }
+      }
+    }
+
+    stage('Run Trivy') {
+      steps {
+        sh '''
+          docker run --rm -v $(pwd):/src aquasec/trivy fs --format json --output ${REPORT_DIR}/trivy.json /src || true
+        '''
+      }
+    }
+
+    stage('Run tfsec') {
+      steps {
+        sh '''
+          docker run --rm -v $(pwd):/src liamg/tfsec /src --format json --out ${REPORT_DIR}/tfsec.json || true
+        '''
+      }
+    }
+
+    stage('Publish Reports') {
+      steps {
+        archiveArtifacts artifacts: '${REPORT_DIR}/*.json', allowEmptyArchive: true
+      }
+    }
+  }
+}

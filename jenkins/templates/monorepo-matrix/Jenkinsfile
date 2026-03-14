@@ -1,0 +1,57 @@
+pipeline {
+  agent none
+
+  stages {
+    stage('Determine Changes') {
+      agent any
+      steps {
+        script {
+          // Example: detect services based on changed directories
+          def changed = sh(script: "git diff --name-only origin/main...HEAD", returnStdout: true).trim().split('\n')
+          def services = []
+          changed.each { file ->
+            if (file.startsWith('services/service-a/')) services << 'service-a'
+            if (file.startsWith('services/service-b/')) services << 'service-b'
+            if (file.startsWith('services/service-c/')) services << 'service-c'
+          }
+          services = services.unique()
+          if (services.isEmpty()) {
+            services = ['service-a','service-b','service-c'] // fallback to all
+          }
+          env.SERVICES_TO_BUILD = services.join(',')
+          echo "Will build services: ${env.SERVICES_TO_BUILD}"
+        }
+      }
+    }
+
+    stage('Build & Test per service') {
+      matrix {
+        axes {
+          axis {
+            name 'SERVICE'
+            values 'service-a', 'service-b', 'service-c'
+          }
+        }
+        agent { label 'docker' }
+        when {
+          expression { env.SERVICES_TO_BUILD.split(',').contains(env.SERVICE) }
+        }
+        stages {
+          stage('Checkout') {
+            steps { checkout scm }
+          }
+          stage('Unit Tests') {
+            steps {
+              sh "cd services/${SERVICE} && npm install && npm test"
+            }
+          }
+          stage('Build Image') {
+            steps {
+              sh "docker build -t ${SERVICE}:${env.BUILD_NUMBER} services/${SERVICE}"
+            }
+          }
+        }
+      }
+    }
+  }
+}

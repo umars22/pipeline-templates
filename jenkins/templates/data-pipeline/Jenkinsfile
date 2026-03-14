@@ -1,0 +1,32 @@
+pipeline {
+  agent any
+
+  environment {
+    AWS_REGION = 'us-east-1'
+    GLUE_JOB = 'my-glue-job'
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Run Glue Job') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            JOB_RUN_ID=$(aws glue start-job-run --job-name ${GLUE_JOB} --region ${AWS_REGION} --query JobRunId --output text)
+            echo "Glue run ID $JOB_RUN_ID"
+            aws glue get-job-run --job-name ${GLUE_JOB} --run-id $JOB_RUN_ID --region ${AWS_REGION}
+          '''
+        }
+      }
+    }
+
+    stage('Validate output') {
+      steps {
+        sh 'python scripts/validate_glue_output.py'
+      }
+    }
+  }
+}
