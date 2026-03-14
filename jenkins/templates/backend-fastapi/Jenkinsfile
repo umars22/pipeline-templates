@@ -1,0 +1,86 @@
+pipeline {
+  agent {
+    docker {
+      image 'python:3.11-slim'
+      args '-u root:root'
+    }
+  }
+
+  environment {
+    APP_NAME = 'fastapi-service'
+    AWS_REGION = 'us-east-1'
+    ACCOUNT_ID = '123456789012' // replace with your AWS account
+    ECR_REPO = "${APP_NAME}"
+    IMAGE_TAG = "${env.BUILD_NUMBER}"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Install Dependencies') {
+      steps {
+        sh 'pip install --upgrade pip'
+        sh 'pip install -r backend/requirements.txt pytest'
+      }
+    }
+
+    stage('Unit Tests') {
+      steps {
+        sh 'cd backend && pytest --maxfail=1 --disable-warnings'
+      }
+    }
+
+    stage('Build Image') {
+      steps {
+        script {
+          sh """
+            docker build -t ${APP_NAME}:${IMAGE_TAG} -f backend/Dockerfile .
+          """
+        }
+      }
+    }
+
+    stage('Push to ECR') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          script {
+            sh """
+              aws --version
+              aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+              docker tag ${APP_NAME}:${IMAGE_TAG} ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+              docker push ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+            """
+          }
+        }
+      }
+    }
+
+    stage('Deploy to ECS') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            aws ecs update-service \
+              --cluster ${APP_NAME}-cluster \
+              --service ${APP_NAME}-svc \
+              --force-new-deployment \
+              --region ${AWS_REGION}
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      cleanWs()
+    }
+  }
+}

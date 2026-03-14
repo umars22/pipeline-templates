@@ -1,0 +1,34 @@
+pipeline {
+  agent { label 'node' }
+
+  environment {
+    EXPO_TOKEN = credentials('expo-token')
+    EAS_PROFILE = 'production'
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Install deps') {
+      steps {
+        sh '''
+          cd frontend
+          npm install
+        '''
+      }
+    }
+
+    stage('EAS Build') {
+      steps {
+        withCredentials([string(credentialsId: 'expo-token', variable: 'EXPO_TOKEN')]) {
+          sh '''
+            cd frontend
+            npx eas login --token $EXPO_TOKEN
+            npx eas build --platform ios --profile ${EAS_PROFILE} --non-interactive
+            npx eas build --platform android --profile ${EAS_PROFILE} --non-interactive
+          '''
+        }
+      }
+    }
+  }
+}

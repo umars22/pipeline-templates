@@ -1,0 +1,47 @@
+pipeline {
+  agent { label 'node' }
+
+  environment {
+    AWS_REGION = 'us-east-1'
+    S3_BUCKET = 'my-react-app-bucket'
+    CLOUDFRONT_DISTRIBUTION = 'E1234567890'
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Install & Build') {
+      steps {
+        sh '''
+          cd frontend
+          npm install
+          npm run build
+        '''
+      }
+    }
+
+    stage('Deploy to S3') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            aws s3 sync frontend/build s3://${S3_BUCKET}/ --delete --region ${AWS_REGION}
+          '''
+        }
+      }
+    }
+
+    stage('Invalidate CloudFront') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            aws cloudfront create-invalidation --distribution-id ${CLOUDFRONT_DISTRIBUTION} --paths '/*'
+          '''
+        }
+      }
+    }
+  }
+}

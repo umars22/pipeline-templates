@@ -1,0 +1,43 @@
+pipeline {
+  agent { docker { image 'hashicorp/terraform:1.6.6' } }
+
+  environment {
+    AWS_REGION = 'us-east-1'
+    TF_WORKSPACE = 'default'
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Terraform fmt & validate') {
+      steps {
+        sh 'terraform fmt -check'
+        sh 'terraform init'
+        sh 'terraform validate'
+      }
+    }
+
+    stage('Plan') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh "terraform plan -input=false -out=tfplan"
+        }
+      }
+    }
+
+    stage('Approve & Apply') {
+      steps {
+        input message: 'Apply Terraform changes?', ok: 'Apply'
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh 'terraform apply -input=false tfplan'
+        }
+      }
+    }
+  }
+
+  post { always { cleanWs() } }
+}

@@ -1,0 +1,56 @@
+pipeline {
+  agent any
+
+  parameters {
+    choice(name: 'ENV', choices: ['dev', 'stage', 'prod'], description: 'Deployment environment')
+  }
+
+  environment {
+    AWS_REGION = 'us-east-1'
+    ACCOUNT_ID = '123456789012'
+    SERVICE_NAME = 'microservice'
+    IMAGE_TAG = "${env.BUILD_NUMBER}"
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Build & Test') {
+      steps {
+        sh 'docker build -t ${SERVICE_NAME}:${IMAGE_TAG} .'
+        sh 'docker run --rm ${SERVICE_NAME}:${IMAGE_TAG} pytest'
+      }
+    }
+
+    stage('Push Image') {
+      steps {
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            docker tag ${SERVICE_NAME}:${IMAGE_TAG} ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}:${IMAGE_TAG}
+            docker push ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${SERVICE_NAME}:${IMAGE_TAG}
+          '''
+        }
+      }
+    }
+
+    stage('Deploy') {
+      steps {
+        input message: "Deploy ${IMAGE_TAG} to ${params.ENV}?", ok: 'Deploy'
+        withCredentials([
+          usernamePassword(credentialsId: 'aws-cli-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
+            aws ecs update-service \
+              --cluster ${SERVICE_NAME}-${params.ENV}-cluster \
+              --service ${SERVICE_NAME}-${params.ENV}-svc \
+              --force-new-deployment \
+              --region ${AWS_REGION}
+          '''
+        }
+      }
+    }
+  }
+}
