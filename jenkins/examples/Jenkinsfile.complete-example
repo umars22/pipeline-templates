@@ -1,0 +1,94 @@
+#!/usr/bin/env groovy
+
+@Library('sbpo-pipeline-library') _
+
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_REGISTRY = 'your-registry.com'
+        IMAGE_NAME = 'myapp'
+        TERRAFORM_DIR = './terraform'
+        K8S_NAMESPACE = 'production'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Build & Push Docker Image') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    dockerBuildPush(
+                        imageName: env.IMAGE_NAME,
+                        registry: env.DOCKER_REGISTRY,
+                        tag: env.BUILD_NUMBER,
+                        registryCredentials: 'docker-registry-credentials'
+                    )
+                }
+            }
+        }
+        
+        stage('Terraform Deploy') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    terraformDeploy(
+                        terraformDir: env.TERRAFORM_DIR,
+                        workspace: 'production',
+                        action: 'apply',
+                        autoApprove: false
+                    )
+                }
+            }
+        }
+        
+        stage('K8s Deploy') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    k8sDeploy(
+                        manifest: 'k8s/deployment.yaml',
+                        namespace: env.K8S_NAMESPACE,
+                        kubeconfigId: 'kubeconfig-production',
+                        imageTag: env.BUILD_NUMBER,
+                        deploymentName: 'myapp'
+                    )
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            script {
+                sendNotification(
+                    channel: '#deployments',
+                    message: "Successfully deployed ${env.IMAGE_NAME}:${env.BUILD_NUMBER}",
+                    status: 'SUCCESS',
+                    type: 'slack'
+                )
+            }
+        }
+        failure {
+            script {
+                sendNotification(
+                    channel: '#deployments',
+                    message: "Failed to deploy ${env.IMAGE_NAME}:${env.BUILD_NUMBER}",
+                    status: 'FAILURE',
+                    type: 'slack'
+                )
+            }
+        }
+    }
+}

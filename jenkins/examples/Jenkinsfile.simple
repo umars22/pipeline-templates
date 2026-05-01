@@ -1,0 +1,20 @@
+#!/usr/bin/env groovy
+
+@Library('sbpo-pipeline-library') _
+
+pipeline {
+    agent any
+    
+    stages {
+        stage('Build') {
+            steps {
+                script {
+                    dockerBuildPush(
+                        imageName: 'my-service',
+                        tag: env.BUILD_NUMBER
+                    )
+                }
+            }
+        }
+    }
+}
